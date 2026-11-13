@@ -1,28 +1,29 @@
+from collections import deque
 import os
 from dotenv import load_dotenv
-from flask import Flask, render_template, request
+from flask import Flask, jsonify, render_template, request
 from groq import Groq
-from langchain_core.prompts import ChatPromptTemplate
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_groq import ChatGroq
 from langchain_pinecone import PineconeVectorStore
-from src.helper import download_embedding
-from src.prompt import system_prompt
-
-load_dotenv()
+from src.helper import download_hugging_face_embeddings
+from src.prompt import *
 
 app = Flask(__name__)
 
-# API Key লোড করা (.env থেকে অতিরিক্ত স্পেস বা কোটেশন থাকলে তা পরিষ্কার করা)
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip().strip('"').strip("'")
-PINECONE_API_KEY = (
-    os.environ.get("PINECONE_API_KEY", "").strip().strip('"').strip("'")
-)
+load_dotenv()
 
-os.environ["GROQ_API_KEY"] = GROQ_API_KEY
+PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
 os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
+os.environ["GROQ_API_KEY"] = GROQ_API_KEY
 
-# এমবেডিং ও Pinecone ইনডেক্স কানেক্ট করা
-embeddings = download_embedding()
+embeddings = download_hugging_face_embeddings()
+
 index_name = "medical-chatbot"
 
 docsearch = PineconeVectorStore.from_existing_index(
@@ -34,51 +35,53 @@ retriever = docsearch.as_retriever(
 )
 
 
-# আপনার Groq API Key-তে কোন কোন মডেল সচল আছে তা অটোমেটিক খুঁজে বের করার ফাংশন
-def get_active_groq_model(api_key):
+def get_working_groq_model(api_key):
   try:
     client = Groq(api_key=api_key)
     models = client.models.list()
     available = [
         m.id
         for m in models.data
-        if "whisper" not in m.id.lower()
-        and "guard" not in m.id.lower()
-        and "tts" not in m.id.lower()
+        if "whisper" not in m.id.lower() and "guard" not in m.id.lower()
     ]
-    print("\n✅ Available Chat Models for your API Key:", available)
+    print(f"✅ Available Chat Models: {available}")
 
-    # ভালো মডেলগুলোর অগ্রাধিকার তালিকা
-    preferred = [
+    preferred_order = [
         "llama-3.3-70b-versatile",
         "llama-3.1-8b-instant",
-        "gemma2-9b-it",
+        "llama3-8b-8192",
         "mixtral-8x7b-32768",
+        "gemma2-9b-it",
     ]
-    for p in preferred:
-      if p in available:
-        return p
-
-    # তালিকার কোনোটি না থাকলে আপনার অ্যাকাউন্টের প্রথম সচল চ্যাট মডেলটি নেবে
+    for pref in preferred_order:
+      if pref in available:
+        return pref
     if available:
       return available[0]
   except Exception as e:
-    print("\n⚠️ Error checking Groq models:", e)
+    print(f"⚠️ Error fetching models: {e}")
   return "llama-3.1-8b-instant"
 
 
-ACTIVE_MODEL = get_active_groq_model(GROQ_API_KEY)
-print(f"🚀 Using Groq Model: {ACTIVE_MODEL}\n")
+selected_model = get_working_groq_model(GROQ_API_KEY)
+print(f"🚀 Using Groq Model: {selected_model}")
 
-# সচল মডেল দিয়ে LLM ইনিশিয়ালাইজ করা
 llm = ChatGroq(
-    temperature=0.4, model_name=ACTIVE_MODEL, groq_api_key=GROQ_API_KEY
+    groq_api_key=GROQ_API_KEY, model_name=selected_model, temperature=0.3
 )
 
+# মেমোরির জন্য ChatPromptTemplate-এ chat_history যুক্ত করা হলো
 prompt = ChatPromptTemplate.from_messages([
     ("system", system_prompt),
+    MessagesPlaceholder(variable_name="chat_history"),
     ("human", "{input}"),
 ])
+
+question_answer_chain = create_stuff_documents_chain(llm, prompt)
+rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+
+# শেষ ৬টি কথোপকথন (১২টি মেসেজ) মনে রাখার জন্য মেমোরি বাফার
+chat_history = deque(maxlen=12)
 
 
 @app.route("/")
@@ -88,20 +91,27 @@ def index():
 
 @app.route("/get", methods=["GET", "POST"])
 def chat():
-  msg = request.form["msg"]
-  input_text = msg
-  print("User Input:", input_text)
+  msg = request.form["msg"].strip()
+  print(f"User Input: {msg}")
 
-  # Pinecone থেকে প্রাসঙ্গিক তথ্য (Context) খোঁজা
-  docs = retriever.invoke(input_text)
-  context = "\n".join([doc.page_content for doc in docs])
+  # ইউজার যদি ফলো-আপ প্রশ্ন করে (যেমন: "ans it shortly"), তবে আগের প্রশ্নটিসহ পাইনকোনে সার্চ করবে
+  search_query = msg
+  if len(msg.split()) <= 5 and len(chat_history) >= 2:
+    last_user_msg = chat_history[-2].content
+    search_query = f"{last_user_msg} - {msg}"
 
-  # উত্তর জেনারেট করা
-  chain = prompt | llm
-  response = chain.invoke({"input": input_text, "context": context})
+  response = rag_chain.invoke(
+      {"input": search_query, "chat_history": list(chat_history)}
+  )
 
-  print("Response:", response.content)
-  return str(response.content)
+  answer = response["answer"]
+  print("Response :", answer)
+
+  # বর্তমান প্রশ্ন ও উত্তর মেমোরিতে সেভ করা
+  chat_history.append(HumanMessage(content=msg))
+  chat_history.append(AIMessage(content=answer))
+
+  return str(answer)
 
 
 if __name__ == "__main__":
