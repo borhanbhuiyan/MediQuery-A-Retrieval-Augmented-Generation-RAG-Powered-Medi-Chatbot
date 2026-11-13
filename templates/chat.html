@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediQuery - AI Medical Assistant</title>
+    <!-- Bootstrap CSS for clean styling -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- jQuery -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+    <style>
+        body {
+            background-color: #f4f7f6;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            height: 100vh;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        /* Navbar styling */
+        .medical-navbar {
+            background: linear-gradient(135deg, #0d6efd, #0dcaf0);
+            color: white;
+            padding: 15px 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .medical-navbar h3 {
+            margin: 0;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        .medical-navbar p {
+            margin: 0;
+            font-size: 0.85rem;
+            opacity: 0.9;
+        }
+        /* Main Chat Layout */
+        .chat-container {
+            flex: 1;
+            max-width: 1100px;
+            width: 100%;
+            margin: 20px auto;
+            display: flex;
+            flex-direction: column;
+            background: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+        }
+        /* Message History Box (Bigger & Scrollable) */
+        #messageHistory {
+            flex: 1;
+            padding: 25px;
+            overflow-y: auto;
+            background-color: #f9fbfb;
+            scroll-behavior: smooth;
+        }
+        /* Message Bubbles */
+        .message-box {
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        .user-msg {
+            align-items: flex-end;
+        }
+        .bot-msg {
+            align-items: flex-start;
+        }
+        .msg-text {
+            max-width: 75%;
+            padding: 14px 18px;
+            border-radius: 15px;
+            font-size: 0.95rem;
+            line-height: 1.5;
+            word-wrap: break-word;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.03);
+        }
+        .user-msg .msg-text {
+            background-color: #0d6efd;
+            color: white;
+            border-bottom-right-radius: 3px;
+        }
+        .bot-msg .msg-text {
+            background-color: #e9ecef;
+            color: #212529;
+            border-bottom-left-radius: 3px;
+            border: 1px solid #dee2e6;
+        }
+        .msg-time {
+            font-size: 0.75rem;
+            color: #6c757d;
+            margin-top: 5px;
+            padding: 0 5px;
+        }
+        /* Input Area */
+        .chat-input-area {
+            padding: 20px;
+            background: #ffffff;
+            border-top: 1px solid #e9ecef;
+        }
+        .input-group {
+            background: #f8f9fa;
+            border-radius: 30px;
+            border: 1px solid #ced4da;
+            padding: 5px;
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.02);
+        }
+        .input-group input {
+            border: none;
+            background: transparent;
+            box-shadow: none !important;
+            padding: 10px 15px;
+            font-size: 1rem;
+        }
+        .input-group button {
+            border-radius: 50% !important;
+            width: 45px;
+            height: 45px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #0d6efd;
+            border: none;
+            color: white;
+            transition: background 0.2s;
+        }
+        .input-group button:hover {
+            background-color: #0b5ed7;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Professional Medical Header (No female pictures, clean clinical vibe) -->
+    <div class="medical-navbar d-flex justify-content-between align-items-center">
+        <div>
+            <h3><i class="fa-solid fa-laptop-medical me-2"></i> MediQuery Clinical Assistant</h3>
+            <p><i class="fa-solid fa-circle-dot text-success me-1" style="font-size: 10px;"></i> Professional Medical Consultation & Health Guidance</p>
+        </div>
+        <div>
+            <span class="badge bg-light text-primary px-3 py-2 rounded-pill fw-normal">Secure RAG System</span>
+        </div>
+    </div>
+
+    <!-- Main Large Chat Interface -->
+    <div class="chat-container">
+        <!-- Chat History Scroll Box -->
+        <div id="messageHistory">
+            <div class="message-box bot-msg">
+                <div class="msg-text">
+                    Hello! I am your clinical assistant. Please describe your symptoms or health-related questions, and I will help provide relevant medical information.
+                </div>
+                <div class="msg-time">Just now</div>
+            </div>
+        </div>
+
+        <!-- Input Form -->
+        <div class="chat-input-area">
+            <form id="chatForm">
+                <div class="input-group">
+                    <input type="text" id="text" name="msg" placeholder="Type your symptoms or medical query here..." class="form-control" autocomplete="off" required>
+                    <button type="submit" id="send"><i class="fa-solid fa-paper-plane"></i></button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Script to handle asynchronous chat submission -->
+    <script>
+        $(document).ready(function() {
+            $("#chatForm").on("event submit, submit", function(event) {
+                const date = new Date();
+                const timeString = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const rawText = $("#text").val();
+                if (!rawText.trim()) return;
+
+                // Append User Message
+                const userHtml = `
+                    <div class="message-box user-msg">
+                        <div class="msg-text">${rawText}</div>
+                        <div class="msg-time">${timeString}</div>
+                    </div>`;
+                $("#text").val("");
+                $("#messageHistory").append(userHtml);
+                scrollToBottom();
+
+                // AJAX Request to Flask Backend (/get)
+                $.ajax({
+                    data: { msg: rawText },
+                    type: "POST",
+                    url: "/get",
+                }).done(function(data) {
+                    const botHtml = `
+                        <div class="message-box bot-msg">
+                            <div class="msg-text">${data}</div>
+                            <div class="msg-time">${timeString}</div>
+                        </div>`;
+                    $("#messageHistory").append(botHtml);
+                    scrollToBottom();
+                });
+                event.preventDefault();
+            });
+
+            function scrollToBottom() {
+                const chatBox = document.getElementById("messageHistory");
+                chatBox.scrollTop = chatBox.scrollHeight;
+            }
+        });
+    </script>
+</body>
+</html>
