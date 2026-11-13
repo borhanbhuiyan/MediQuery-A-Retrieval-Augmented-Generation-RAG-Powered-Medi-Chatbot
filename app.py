@@ -29,7 +29,7 @@ retriever = docsearch.as_retriever(
 )
 
 # Groq LLM ইনিশিয়ালাইজেশন (Llama 3.3 মডেল)
-llm = ChatGroq(temperature=0.4, model_name="llama3-8b-8192", groq_api_key=GROQ_API_KEY)
+llm = ChatGroq(temperature=0.4, model_name="llama-3.1-8b-instant", groq_api_key=GROQ_API_KEY)
 
 prompt = ChatPromptTemplate.from_messages([
     ("system", system_prompt),
